@@ -1,0 +1,242 @@
+; VARIOUS PREPROCESSING OPTIONS
+title                    = 
+include                  = 
+define                   = 
+
+; RUN CONTROL PARAMETERS
+integrator               = md
+; Start time and timestep in ps
+tinit                    = 0
+dt                       = 0.002
+nsteps                   = -1
+
+ld_seed = -1
+; For exact run continuation or redoing part of a run
+init_step                = 0
+; mode for center of mass motion removal
+comm-mode                = Linear
+; number of steps for center of mass motion removal
+nstcomm                  = 100
+nstcalcenergy		 = 100
+nstdhdl			 = 100
+; group(s) for center of mass motion removal
+comm-grps                = 
+
+; ENERGY MINIMIZATION OPTIONS
+; Force tolerance and initial step-size
+emtol                    = 10
+emstep                   = 0.01
+; Max number of iterations in relax_shells
+niter                    = 0
+; Step size (1/ps^2) for minimization of flexible constraints
+fcstep                   = 0
+; Frequency of steepest descents steps when doing CG
+nstcgsteep               = 1000
+nbfgscorr                = 10
+
+; OUTPUT CONTROL OPTIONS (just have enough data to be able to check energy conservation/structures for unexpected configurational transitions)
+; Output frequency for coords (x), velocities (v) and forces (f)
+nstxout                  = 0
+nstvout                  = 0
+nstfout                  = 0
+; Output frequency for energies to log file and energy file
+nstlog                   = 5000
+nstenergy                = 5000
+; Output frequency and precision for xtc file
+nstxout-compressed       = 50000
+compressed-x-precision   = 1000
+; This selects the subset of atoms for the xtc file. You can
+; select multiple groups. By default all atoms will be written.
+xtc-grps                 = 
+; Selection of energy groups
+energygrps               = 
+
+; NEIGHBORSEARCHING PARAMETERS
+; nblist update frequency
+cutoff-scheme            = verlet
+nstlist                  = 50 ; working on GPU; which quantities should be a multiple of nstlist?
+; Periodic boundary conditions: xyz (default), no (vacuum)
+; or full (infinite systems only)
+pbc                      = xyz
+; nblist cut-off        
+;rlist                    = 1.2 ; don't know why this is in here: no point in setting it larger than rcoulomb/rvdw and it is anyways overwritten
+
+; OPTIONS FOR ELECTROSTATICS AND VDW
+; Method for doing electrostatics
+coulombtype              = PME
+coulomb-modifier         = Potential-shift
+rcoulomb-switch          = 0
+rcoulomb                 = 1.1
+; Dielectric constant (DC) for cut-off or DC of reaction field
+epsilon-r                = 1
+; Method for doing Van der Waals
+vdwtype                  = Cut-off
+vdw-modifier             = Potential-shift
+; cut-off lengths       
+rvdw-switch              = 0
+rvdw                     = 1.1
+; Apply long range dispersion corrections for Energy and Pressure
+DispCorr                 = EnerPres
+; Extension of the potential lookup tables beyond the cut-off
+table-extension          = 1
+; Spacing for the PME/PPPM FFT grid
+fourierspacing           = 0.12
+; FFT grid size, when a value is 0 fourierspacing will be used
+fourier_nx               = 0
+fourier_ny               = 0
+fourier_nz               = 0
+; EWALD/PME/PPPM parameters
+pme_order                = 4
+ewald_rtol               = 1e-05
+ewald_geometry           = 3d
+epsilon_surface          = 0
+
+; IMPLICIT SOLVENT (for use with Generalized Born electrostatics)
+implicit_solvent         = No
+
+; OPTIONS FOR WEAK COUPLING ALGORITHMS
+; Temperature coupling  
+tcoupl                   = v-rescale
+; Groups to couple separately
+tc-grps                  = System
+; Time constant (ps) and reference temperature (K)
+tau-t                    = 0.1
+ref-t                    = 298
+; Pressure coupling     
+Pcoupl                   = C-rescale
+Pcoupltype               = Isotropic
+; Time constant (ps), compressibility (1/bar) and reference P (bar)
+tau-p                    = 0.5 ; value applied in the original publication
+compressibility          = 4.6E-5
+ref-p                    = 1
+
+; SIMULATED ANNEALING  
+; Type of annealing for each temperature group (no/single/periodic)
+annealing                = no
+
+; GENERATE VELOCITIES FOR STARTUP RUN
+gen-vel                  = yes
+gen-temp                 = 298
+gen-seed                 = -1
+
+; OPTIONS FOR BONDS    
+constraints              = all-bonds
+; Type of constraint algorithm
+constraint-algorithm     = Lincs
+; Do not constrain the start configuration
+continuation             = no
+; Use successive overrelaxation to reduce the number of shake iterations
+Shake-SOR                = no
+; Relative tolerance of shake
+shake-tol                = 1e-04
+; Highest order in the expansion of the constraint coupling matrix
+lincs-order              = 4
+; Number of iterations in the final step of LINCS. 1 is fine for
+; normal simulations, but use 2 to conserve energy in NVE runs.
+; For energy minimization with constraints it should be 4 to 8.
+lincs-iter               = 2
+; Lincs will write a warning to the stderr if in one step a bond
+; rotates over more degrees than
+lincs-warnangle          = 30
+; Convert harmonic bonds to morse potentials
+morse                    = no
+
+; ENERGY GROUP EXCLUSIONS
+; Pairs of energy groups for which all non-bonded interactions are excluded
+energygrp_excl           = 
+
+; NMR refinement stuff 
+; Distance restraints type: No, Simple or Ensemble
+disre                    = No
+; Force weighting of pairs in one distance restraint: Conservative or Equal
+disre-weighting          = Equal
+; Use sqrt of the time averaged times the instantaneous violation
+disre-mixed              = no
+disre-fc                 = 1000
+disre-tau                = 0
+; Output frequency for pair distances to energy file
+nstdisreout              = 100
+; Orientation restraints: No or Yes
+orire                    = no
+; Orientation restraints force constant and tau for time averaging
+orire-fc                 = 0
+orire-tau                = 0
+orire-fitgrp             = 
+; Output frequency for trace(SD) to energy file
+nstorireout              = 100
+
+; Free energy control stuff
+free-energy              = yes
+init-lambda-state        = 0 ; not using slow growth => specify init-lambda-state instead of init-lambda
+;                              0     1     2     3     4     5     6     7     8     9    10    11; 12 lambda windows were used for FEP+ by Gapsys et al.
+fep-lambdas              = 0.000 0.091 0.182 0.273 0.364 0.455 0.545 0.636 0.727 0.818 0.909 1.000
+mass-lambdas             = 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 ; masses cannot be perturbed with AWH
+calc-lambda-neighbors    = -1 ; be able to re-calculate free energy with MBAR ; seems to be required for AWH, too (BioExcel)
+separate-dhdl-file       = yes
+sc-alpha                 = 0.3
+sc-sigma                 = 0.25
+sc-power                 = 1
+sc-r-power               = 6
+sc-coul                  = yes
+;alpha_Q = 0.3
+;sigma_Q = 1.0
+
+; AWH parameters
+awh                        = yes
+awh-potential              = umbrella ; (BioExcel, not clear to me from mdp homepage)
+awh-share-multisim         = no ; maybe try multiple walkers together with shorter simulations later
+awh-nstout                 = 50000 ; a multiple of nstenergy
+awh-nstsample              = 100 ; according to Lundborg2021; a multiple of nstcalcenergy (BioExcel)
+awh-nsamples-update        = 10
+awh-nbias                  = 1
+awh1-error-init            = 10.0 ; (BioExcel and mdp homepage and Lundborg2021)
+awh1-growth                = exp-linear ; according to Lundborg2021
+awh1-equilibrate-histogram = yes ; according to Lundborg2021; recommended if running multiple walkers (BioExcel and mdp homepage)
+awh1-target                = constant ; according to Lundborg2021
+awh1-target-beta-scaling   = 0 ; only relevant if awh1-target=boltzmann or awh1-target=local-boltzmann
+awh1-target-cutoff         = 0 ; only relevant if awh1-target=cutoff
+awh1-user-data             = no
+awh1-share-group           = 0 ; must be changed if multiple walkers are used
+awh1-ndim                  = 1
+awh1-dim1-coord-provider   = fep-lambda ; (BioExcel and mdp)
+awh1-dim1-coord-index      = 1 ; might not be necessary with fep-lambda
+;awh1-dim1-force-constant   = 10000 ; high value suggested by reference manual; not needed with fep-lambda (only grompp error, not clear from BioExcel nor mdp homepage)
+awh1-dim1-start            = 0 ; BioExcel (mdp homepage only documents usage together with pull code)
+awh1-dim1-end              = 11 ; BioExcel (mdp homepage only documents usage together with pull code)
+awh1-dim1-diffusion        = 0.001 ; recommendation from BioExcel seminar: 0.001 -> might want to add this on the mdp homepage
+awh1-dim1-cover-diameter   = 0.0 ; stick to default here (must be changed if multiple walkers are used)
+
+;refcoord-scaling = com; should not be needed: no position restraints applied
+
+
+; Non-equilibrium MD stuff
+acc-grps                 = 
+accelerate               = 
+freezegrps               = 
+freezedim                = 
+cos-acceleration         = 0
+
+; Electric fields      
+; Format is number of terms (int) and for all terms an amplitude (real)
+; and a phase angle (real)
+E-x                      = 
+E-xt                     = 
+E-y                      = 
+E-yt                     = 
+E-z                      = 
+E-zt                     = 
+
+; User defined thingies
+user1-grps               = 
+user2-grps               = 
+userint1                 = 0
+userint2                 = 0
+userint3                 = 0
+userint4                 = 0
+userreal1                = 0
+userreal2                = 0
+userreal3                = 0
+userreal4                = 0
+
+; obsolete entries that were removed: 'domain-decomposition', 'andersen_seed', 'dihre', 'dihre-fc', 'dihre-tau', 'nstdihreout', 'nstcheckpoint', 'optimize_fft', 'gb_algorithm', 'nstgbradii', 'rgbradii', 'gb_saltconc', 'ns-type'
+; replacements: 'unconstrained-start' by 'continuation', 'nstxtcout' by 'nstxout-compressed', 'xtc-precision' by 'compressed-x-precision'

@@ -1,0 +1,35 @@
+; VARIOUS PREPROCESSING OPTIONS
+define                   = -DPOSRES
+
+; RUN CONTROL PARAMETERS
+integrator               = steep
+nsteps                   = 1000
+
+comm-mode                = None
+
+; ENERGY MINIMIZATION OPTIONS
+emtol                    = 100
+emstep                   = 0.001
+
+; NEIGHBORSEARCHING PARAMETERS
+cutoff-scheme            = verlet
+nstlist                  = 10
+pbc                      = xyz
+
+; OPTIONS FOR ELECTROSTATICS AND VDW
+coulombtype              = PME
+coulomb-modifier         = Potential-shift
+rcoulomb                 = 3.0 ; using very large cut-offs as atoms may be far apart in different docking structures
+vdwtype                  = Cut-off
+vdw-modifier             = Potential-shift
+rvdw                     = 3.0 ; using very large cut-offs as atoms may be far apart in different docking structures
+
+; OPTIONS FOR WEAK COUPLING ALGORITHMS
+tcoupl                   = No
+Pcoupl                   = No
+
+; GENERATE VELOCITIES FOR STARTUP RUN
+gen-vel                  = no
+
+; OPTIONS FOR BONDS    
+constraints              = none
