@@ -10,3 +10,6 @@ PRACTICAL HINTS HOW TO RUN THE CADD WORKFLOW
 
 Note:
 SLURM settings in this repository are specific to Leonardo and may need to be updated on other clusters.
+
+The HyperQueue port of the CADD workflow is stored in a separate repository and available at:
+https://github.com/LigateProject/Computer-Aided-Drug-Design-workflow-HyperQueue
