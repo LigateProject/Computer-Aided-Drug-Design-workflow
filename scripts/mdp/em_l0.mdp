@@ -180,7 +180,7 @@ sc-alpha                 = 0.3
 sc-sigma                 = 0.25
 sc-power                 = 1
 sc-r-power               = 6
-sc-coul = yes
+sc-coul                  = yes
 ;alpha_Q = 0.3
 ;sigma_Q = 1.0
 

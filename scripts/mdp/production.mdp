@@ -120,7 +120,7 @@ gen-temp                 = 298
 gen-seed                 = -1
 
 ; OPTIONS FOR BONDS    
-constraints              = all-bonds
+constraints              = h-bonds
 ; Type of constraint algorithm
 constraint-algorithm     = Lincs
 ; Do not constrain the start configuration
@@ -168,9 +168,10 @@ nstorireout              = 100
 ; Free energy control stuff
 free-energy              = yes
 init-lambda-state        = 0 ; not using slow growth => specify init-lambda-state instead of init-lambda
-;                              0     1     2     3     4     5     6     7     8     9    10    11; 12 lambda windows were used for FEP+ by Gapsys et al.
-fep-lambdas              = 0.000 0.091 0.182 0.273 0.364 0.455 0.545 0.636 0.727 0.818 0.909 1.000
-mass-lambdas             = 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 ; masses cannot be perturbed with AWH
+; 12 lambda windows were used for FEP+ by Gapsys et al.; however, we must be able to calculate RBFEs for ligand pairs with way less overlap, and AWH's performance is not affected by too many windows  => 48 lambda windows
+;                              0     1     2     3     4     5     6     7     8     9    10    11    12    13    14    15    16    17    18    19    20    21    22    23    24    25    26    27    28    29    30    31    32    33    34    35    36    37    38    39    40    41    42    43    44    45    46    47
+fep-lambdas              = 0.000 0.021 0.043 0.064 0.085 0.106 0.128 0.149 0.170 0.191 0.213 0.234 0.255 0.277 0.298 0.319 0.340 0.362 0.383 0.404 0.426 0.447 0.468 0.489 0.511 0.532 0.553 0.574 0.596 0.617 0.638 0.660 0.681 0.702 0.723 0.745 0.766 0.787 0.809 0.830 0.851 0.872 0.894 0.915 0.936 0.957 0.979 1.000
+mass-lambdas             = 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000; masses cannot be perturbed with AWH
 calc-lambda-neighbors    = -1 ; be able to re-calculate free energy with MBAR ; seems to be required for AWH, too (BioExcel)
 separate-dhdl-file       = yes
 sc-alpha                 = 0.3
@@ -202,7 +203,7 @@ awh1-dim1-coord-provider   = fep-lambda ; (BioExcel and mdp)
 awh1-dim1-coord-index      = 1 ; might not be necessary with fep-lambda
 ;awh1-dim1-force-constant   = 10000 ; high value suggested by reference manual; not needed with fep-lambda (only grompp error, not clear from BioExcel nor mdp homepage)
 awh1-dim1-start            = 0 ; BioExcel (mdp homepage only documents usage together with pull code)
-awh1-dim1-end              = 11 ; BioExcel (mdp homepage only documents usage together with pull code)
+awh1-dim1-end              = 47 ; BioExcel (mdp homepage only documents usage together with pull code)
 awh1-dim1-diffusion        = 0.001 ; recommendation from BioExcel seminar: 0.001 -> might want to add this on the mdp homepage
 awh1-dim1-cover-diameter   = 0.0 ; stick to default here (must be changed if multiple walkers are used)
 

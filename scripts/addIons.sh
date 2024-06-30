@@ -1,9 +1,11 @@
 #!/bin/bash
 set -e
 
-module load gromacs/2023.2 gromacs=gmx
+echo "CADD: AddIons " >> $LOGFILE
+module use $CADD_SOFTWARE_MODULES
+module load gromacs/2023.2
 
-PATH_TO_MDP=CADD/scripts/mdp
+PATH_TO_MDP=${CADD_SCRIPTS_DIR}/mdp
 
 target=$(pwd | rev | cut -d "/" -f 1 | rev)
 
@@ -12,9 +14,9 @@ cd ${edge}
 for pose in pose_*; do
 cd ${pose}
 # need to add ions to get a neutral simulation box
-## It should be -maxwarn 1, but right now, we have some issues with STaGE not re-naming atoms properly (ugly fix that must be replaced)
-gmx grompp -f ${PATH_TO_MDP}/em_l0.mdp -c solvated_complex.gro -r solvated_complex.gro -p topol_amber.top -o addIons_complex.tpr -po mdout_complex.mdp -maxwarn 2 || true
-gmx grompp -f ${PATH_TO_MDP}/em_l0.mdp -c solvated_ligand.gro -r solvated_ligand.gro -p topol_ligandInWater.top -o addIons_ligand.tpr -po mdout_ligand.mdp -maxwarn 2 || true
+## It should be -maxwarn 2, but right now, we have some issues with STaGE not re-naming atoms properly (ugly fix that must be replaced)
+gmx grompp -f ${PATH_TO_MDP}/em_l0.mdp -c solvated_complex.gro -r solvated_complex.gro -p topol_amber.top -o addIons_complex.tpr -po mdout_complex.mdp -maxwarn 3 || true
+gmx grompp -f ${PATH_TO_MDP}/em_l0.mdp -c solvated_ligand.gro -r solvated_ligand.gro -p topol_ligandInWater.top -o addIons_ligand.tpr -po mdout_ligand.mdp -maxwarn 3 || true
 
 ## error catching
 ## addIons.tpr must exist
@@ -89,6 +91,7 @@ then
 echo "For ${edge}, the workflow step 'adding ions' could not be completed successfully for any of the poses. Deleting directory!"
 cd ..
 rm -rf ${edge}
+continue
 fi
 
 cd ..
@@ -105,3 +108,4 @@ fi
 
 # unload required external software to restore the environment at the beginning of the script
 module unload gromacs/2023.2
+echo "CADD: AddIons -- exiting " >> $LOGFILE

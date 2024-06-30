@@ -1,9 +1,47 @@
 #!/bin/bash
 set -e
 
-module load gromacs/2023.2 gromacs=gmx
+echo "CADD: Launching solvate " >> $LOGFILE
+module use $CADD_SOFTWARE_MODULES
+module load gromacs/2023.2
 
 target=$(pwd | rev | cut -d "/" -f 1 | rev)
+
+### BEGIN: clean up after createHybridLigand.sh ###
+ligands1=($(grep "Ligand_1" ligandPairs.json | cut -d "\"" -f 4 | cut -d "/" -f 2))
+ligands2=($(grep "Ligand_2" ligandPairs.json | cut -d "\"" -f 4 | cut -d "/" -f 2))
+
+for index in $(seq 0 $(( ${#ligands1[@]}-1 ))); do
+
+cd edge_${ligands1[${index}]}_${ligands2[${index}]}
+
+# hybrid topology generation may time out or get out-of-memory killed
+for pose in pose_*; do
+if ! [ -f ${pose}/merged.itp ]
+then
+rm -rf ${pose}
+fi
+done
+
+# remove directory if none of the poses survives
+if (( $(ls -lh | grep "pose_" | wc -l) < 1 ));
+then
+echo "For edge_${ligands1[${index}]}_${ligands2[${index}]}, no hybrid ligand poses could be generated. Deleting directory!"
+cd ..
+rm -rf edge_${ligands1[${index}]}_${ligands2[${index}]}
+continue
+fi
+
+echo "Successfully setup the hybrid ligand in edge_${ligands1[${index}]}_${ligands2[${index}]}!"
+cd ..
+done
+
+# clean up
+rm topol.top conf.gro
+for lig in $(ls -d */ | grep -v "edge"); do
+rm -r ${lig}
+done
+### END: clean up after createHybridLigand.sh ###
 
 for edge in edge_*; do
 cd ${edge}
@@ -100,3 +138,4 @@ fi
 
 # unload required external software to restore the environment at the beginning of the script
 module unload gromacs/2023.2
+echo "CADD: Launching solvate -- exiting" >> $LOGFILE

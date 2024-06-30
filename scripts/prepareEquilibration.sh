@@ -1,11 +1,13 @@
 #!/bin/bash
 set -e
 
+echo "CADD: Preparing Equilibration " >> $LOGFILE
 export LC_NUMERIC="en_US.UTF-8"
 
-module load gromacs/2023.2 gromacs=gmx
+module use $CADD_SOFTWARE_MODULES
+module load gromacs/2023.2
 
-PATH_TO_MDP=CADD/scripts/mdp
+PATH_TO_MDP=${CADD_SCRIPTS_DIR}/mdp
 
 target=$(pwd | rev | cut -d "/" -f 1 | rev)
 
@@ -108,8 +110,8 @@ fi
 # run grompp to get input .tpr file
 # need to use soft-core potentials although vdW is not switched off => ignore the corresponding warning
 # system may have a slight net charge due to rounding errors => ignore that warning, too
-gmx grompp -f ${PATH_TO_MDP}/eq_nvt_l0.mdp -c ions_complex.gro -p topol_amber.top -o equiNVT_complex.tpr -po equiNVTOut_complex.mdp -maxwarn 2 || true
-gmx grompp -f ${PATH_TO_MDP}/eq_nvt_l0.mdp -c ions_ligand.gro -p topol_ligandInWater.top -o equiNVT_ligand.tpr -po equiNVTOut_ligand.mdp -maxwarn 2 || true
+gmx grompp -f ${PATH_TO_MDP}/eq_nvt_l0.mdp -c ions_complex.gro -p topol_amber.top -o equiNVT_complex.tpr -po equiNVTOut_complex.mdp -maxwarn 3 || true
+gmx grompp -f ${PATH_TO_MDP}/eq_nvt_l0.mdp -c ions_ligand.gro -p topol_ligandInWater.top -o equiNVT_ligand.tpr -po equiNVTOut_ligand.mdp -maxwarn 3 || true
 ## error catching
 ## TPR file for equilibration must exist
 if ! [ -f equiNVT_complex.tpr ]
@@ -157,3 +159,4 @@ fi
 
 # unload required external software to restore the environment at the beginning of the script
 module unload gromacs/2023.2
+echo "CADD: Preparing Equilibration -- exiting " >> $LOGFILE

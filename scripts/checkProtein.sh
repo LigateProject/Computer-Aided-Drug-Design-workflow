@@ -1,17 +1,22 @@
 #!/bin/bash
 
 #SBATCH --job-name=checkTarget
+#SBATCH -p dcgp_usr_prod
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -G 0
 #SBATCH --mem=8GB
-#SBATCH -t 48:00:00
+#SBATCH -t 24:00:00
 #SBATCH -o slurm-%J.out
 
 set -e
 
+echo "CADD: CheckProtein " >>$LOGFILE
+# path to additional modules
+module use ${CADD_SOFTWARE_MODULES}
+
 # make sure we start from a clean environment (mainly needed if the previous complex was deleted)
-modules=(biopython/1.81 boost_own/1.82.0 forSTaGE/acpype/2022.7.21 forSTaGE/ambertools/21 forSTaGE/openbabel/3.1.1 gromacs/2023.2 openmm/7.7.0 ost/2.4 pdb-tools/2.5.0 promod/3.3 python/3.11.1 rmsd/1.5.1 stage/1.0.0 tmbed/1.0.0)
+modules=(biopython/1.81 boost/1.82.0 acpype/2022.7.21 ambertools/22 openbabel/3.1.1 gromacs/2023.2 openmm/7.7.0 ost/2.4 pdb-tools/2.5.0 promod/3.3 python/3.11.1 rmsd/1.5.1 stage/1.0.0 tmbed/1.0.0)
 for mod in ${modules[@]}; do
 if $(module list | grep -q "${mod}")
 then
@@ -23,23 +28,24 @@ done
 module load python/3.11.1
 module load biopython/1.81
 module load tmbed/1.0.0
-module load boost_own/1.82.0
+module load boost/1.82.0
 module load openmm/7.7.0
 module load ost/2.4
 module load promod/3.3
-module load gromacs/2023.2 gromacs=gmx
+module load gromacs/2023.2
 module load rmsd/1.5.1
 module load pdb-tools/2.5.0
 
-export OPENMM_CUDA_COMPILER=/opt/tcbsys/cuda/12.0/bin/nvcc
+module load cuda
+export OPENMM_CUDA_COMPILER=$(which nvcc)
 
 target=$(pwd | rev | cut -d "/" -f 1 | rev)
 
-PATH_TO_SLURM=
-INPUT_PATH=
-PATH_TO_SCRIPTS=
+PATH_TO_SLURM=${CADD_SUBMISSION_DIR}
+INPUT_PATH=${CADD_INPUT_DIR}/${CADD_TARGET}
+PATH_TO_SCRIPTS=${CADD_SCRIPTS_DIR}
 
-echo "Preparing protein ..."
+echo "Preparing protein ..." >> $LOGFILE
 file=${INPUT_PATH}/protein.pdb
 
 canonicalFastaFile=false
@@ -141,7 +147,7 @@ mv new.fasta protein.fasta
 ## We assume that the changes are so small that even side chain atoms complexated by metal ions do not move enough for the complexation to become impossible
 ## Strategy: accept current promod3 script, copy promod3 result back to PDB file (it's very unlikely to have ions or crystal waters resolved next to a missing loop), check RMSD to experimental structure
 # fix protein structure
-echo "Starting promod3"
+echo "CADD: Starting promod3" >> $LOGFILE
 python3 ${PATH_TO_SCRIPTS}/structureNormalisation.py protein.pdb protein.fasta protein_normalised.pdb
 
 # delete folder if the sequence of the PDB structure cannot be properly aligned to the full sequence
@@ -149,6 +155,7 @@ if [ -f normalisationError ]
 then
 cd ..
 rm -rf ${target}
+echo "CADD: promod3 didn't work correctly (alignment error). Stopping workflow execution!" >> $LOGFILE
 echo "promod3 didn't work correctly (alignment error). Stopping workflow execution!"
 exit 0
 fi
@@ -262,6 +269,7 @@ if ! [ -s missingAtoms.txt ]
 then
 if ! [ -s residuesNotRemodelled.txt ]
 then
+echo "CADD: Nothing needed to be modelled. Using the original PDB file!" >> $LOGFILE
 echo "Nothing needed to be modelled. Using the original PDB file!"
 # final clean up
 rm protein.fasta protein.pred protein_normalised.pdb original.pdb remodelled.pdb fused.pdb
@@ -298,7 +306,7 @@ fi
 module unload python/3.11.1
 module unload biopython/1.81
 module unload tmbed/1.0.0
-module unload boost_own/1.82.0
+module unload boost/1.82.0
 module unload openmm/7.7.0
 module unload ost/2.4
 module unload promod/3.3
@@ -307,3 +315,4 @@ module unload rmsd/1.5.1
 module unload pdb-tools/2.5.0
 
 export OPENMM_CUDA_COMPILER=""
+echo "CADD: Exiting CheckProtein ">> $LOGFILE

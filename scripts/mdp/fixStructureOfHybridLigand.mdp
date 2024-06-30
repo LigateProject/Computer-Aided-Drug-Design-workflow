@@ -1,5 +1,5 @@
 ; VARIOUS PREPROCESSING OPTIONS
-define                   = -DPOSRES
+define                   = -DPOSRES -DFLEXIBLE
 
 ; RUN CONTROL PARAMETERS
 integrator               = steep
@@ -31,5 +31,5 @@ Pcoupl                   = No
 ; GENERATE VELOCITIES FOR STARTUP RUN
 gen-vel                  = no
 
-; OPTIONS FOR BONDS    
+; OPTIONS FOR BONDS
 constraints              = none

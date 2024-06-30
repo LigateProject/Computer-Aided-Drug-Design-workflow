@@ -122,7 +122,7 @@ gen-temp                 = 298
 gen-seed                 = -1
 
 ; OPTIONS FOR BONDS    
-constraints              = all-bonds
+constraints              = h-bonds
 ; Type of constraint algorithm
 constraint-algorithm     = Lincs
 ; Do not constrain the start configuration
@@ -179,7 +179,7 @@ sc-coul                  = yes
 ;alpha_Q = 0.3
 ;sigma_Q = 1.0
 
-refcoord-scaling = com
+refcoord-scaling         = com
 
 
 ; Non-equilibrium MD stuff

@@ -1,12 +1,18 @@
 #!/bin/bash
 set -e
 
+now=$(date "+%d:%m:%Y-%H:%M:%S")
+echo "CADD: $now: GROMACS_LiGen_integration_final.sh starting pwd=$PWD" >> $LOGFILE
+cp $CADD_INPUT_DIR/$CADD_TARGET/result.csv .
+cp $CADD_INPUT_DIR/$CADD_TARGET/docked.mol2 .
+
 # required external software
+module use $CADD_SOFTWARE_MODULES
 module load python/3.11.1
-module load forSTaGE/openbabel/3.1.1
-module load forSTaGE/ambertools/21
-module load forSTaGE/acpype/2022.7.21
-module load gromacs/2023.2 gromacs=gmx
+module load openbabel/3.1.1
+module load ambertools/22
+module load acpype/2022.7.21
+module load gromacs/2023.2
 
 # STaGE itself
 module load stage/1.0.0
@@ -14,48 +20,29 @@ export GMXLIB=$GMXDATA
 
 target=$(pwd | rev | cut -d "/" -f 1 | rev)
 
-INPUT_PATH=
-PATH_TO_SCRIPTS=CADD/scripts
+PATH_TO_SCRIPTS=${CADD_SCRIPTS_DIR}
 FF=gaff2
 
-PATH_TO_SLURM=${ligate}/CADDValidation
+PATH_TO_SLURM=${CADD_SUBMISSION_DIR}
 
 echo "Generating topologies for ${target} ..."
 
-echo "Selecting ligands and poses to be used ..."
-numberOfLigands=3 # TODO turn into a user parameter
+echo "Selecting ligands to be used ..."
 
-ligands=($(ls ${INPUT_PATH}/ligands_gaff2/))
-scores1=()
-scores2=()
-poses1=()
-poses2=()
+# should be provided as env variables
+resultFile="result.csv"
+mol2File="docked.mol2"
+numberOfLigands=100 # TODO: turn into user parameter. > actual no. of ligands
 
-for lig in ${ligands[@]}; do
-# select poses with the two highest LiGen scores (TODO: extract more poses as back-up if some of them fail the structure preparation)
-## 1) extract all scores
-LiGenScores=$(grep "Ligen score" ${INPUT_PATH}/ligands_gaff2/${lig}/out_amber_pose_000001.txt | cut -d " " -f 5)
-## 2) identify two highest scores
-scores1+=($(echo ${LiGenScores} | tr " " "\n" | sort -n | tail -1))
-scores2+=($(echo ${LiGenScores} | tr " " "\n" | sort -n | tail -2 | head -1))
-## 3) identify corresponding pose numbers (start counting from 1)
-poses1+=($(grep "Ligen score" ${INPUT_PATH}/ligands_gaff2/${lig}/out_amber_pose_000001.txt | grep -n "${scores1[-1]}" | cut -d ":" -f 1))
-poses2+=($(grep "Ligen score" ${INPUT_PATH}/ligands_gaff2/${lig}/out_amber_pose_000001.txt | grep -n "${scores2[-1]}" | cut -d ":" -f 1))
-done
+# the number of ligands cannot be greater than the number of ligands in the CSV file
+if (( ${numberOfLigands} > $(tail -n +2 ${resultFile} | wc -l) ))
+then
+numberOfLigands=$(tail -n +2 ${resultFile} | wc -l)
+echo "Reducing the number of ligands to ${numberOfLigands} because that is the amount of ligands provided after the virtual screen."
+fi
 
-
-# identify ligands with the highest top scores
-## 1) sort top scores
-IFS=$'\n' topScoresSorted=($(sort <<<"${scores1[*]}"))
-unset IFS
-## 2) identify ligands with the n highest top scores
-selectedLigands=()
-for i in $(seq 1 ${numberOfLigands}); do
-ligandNumber=$(echo ${scores1[@]/${topScoresSorted[-${i}]}//} | cut -d/ -f1 | wc -w | tr -d ' ')
-selectedLigands+=(${ligands[${ligandNumber}]})
-selectedPoses1+=(${poses1[${ligandNumber}]})
-selectedPoses2+=(${poses2[${ligandNumber}]})
-done
+# select ligands with highest score
+selectedLigands=($(tail -n +2 ${resultFile} | sort -nr -k 3 | cut -d "," -f 1 | head -${numberOfLigands}))
 
 numberOfPoses=1
 
@@ -255,94 +242,55 @@ rm -rf ${target}
 exit 0
 fi
 
-count=0
+ligandCount=0
 for lig in ${selectedLigands[@]}; do
-echo "Generating ligand topology for ${lig} ..."
-mkdir ${lig}
-cd ${lig}
+echo "Generating ligand topology for ${lig} in lig_${ligandCount} ..."
+mkdir lig_${ligandCount}
+cd lig_${ligandCount}
 # generate topology and .gro files for ligand
-## only the cleaned .mol2 file has the correct atom naming
-cp ${INPUT_PATH}/ligands_gaff2/${lig}/mol_gmx.mol2 ligand.mol2
-
-if grep -q "EP" ligand.mol2
-then
-numberOfVirtualSites=$(grep -c "EP" ligand.mol2)
-# remove LiGen virtual sites
-sed -i '/EP/d' ligand.mol2
-# adjust atom number
-patternOld="$(head -3 ligand.mol2 | tail -1 | cut -c1-12)"
-patternNew="$(( $(head -3 ligand.mol2 | tail -1 | cut -c1-3)-${numberOfVirtualSites} ))""$(head -3 ligand.mol2 | tail -1 | cut -c4-12)"
-sed -i ligand.mol2 -e "s/${patternOld}/${patternNew}/g"
-fi
-
-obabel "ligand.mol2" -O "${lig}.mol2"
-mv ${lig}.mol2 ligand.mol2
-
-## correct residue names in cleaned .mol2 file
-residueNames1=$(awk '/@<TRIPOS>ATOM/{flag=1; next}/@<TRIPOS>/{flag=0} flag' ligand.mol2 | awk '{print $8}')
-residueNames1=(${residueNames1})
-for residueName1 in ${residueNames1[@]}; do
-if ! $(echo "${residueName1}" | grep -q "\*")
-then
-if (( ${#residueName1} > 3 ))
-then
-residueName1length=${#residueName1}
-spacesToAdd=$(( ${residueName1length} - 3 ))
-lineOfSpaces=$(printf ' %.0s' $(seq 1 $spacesToAdd))
-residueName1New="$(echo ${residueName1} | cut -c1-3)${lineOfSpaces}"
-sed -i ligand.mol2 -e "s/${residueName1}/${residueName1New}/g"
-fi
-fi
-done
 
 ## extract poses
 mkdir pose_0
-python3 ${PATH_TO_SCRIPTS}/extractPose.py <<-eof
-${INPUT_PATH}/ligands_gaff2/${lig}/out_amber_pose_000001.txt
-$(( ${selectedPoses1[${count}]}-1 ))
+python3 ${PATH_TO_SCRIPTS}/extractPose_final.py <<-eof
+../${mol2File}
+${lig}
 pose_0/ligand.mol2
 eof
-obabel "pose_0/ligand.mol2" -O "pose_0/${lig}.mol2"
-mv pose_0/${lig}.mol2 pose_0/ligand.mol2
+### let obabel adjust the format of the MOL2 file as it needs it
+obabel "pose_0/ligand.mol2" -O "pose_0/dummy.mol2"
+mv pose_0/dummy.mol2 pose_0/ligand.mol2
 
 mkdir pose_1
-python3 ${PATH_TO_SCRIPTS}/extractPose.py <<-eof
-${INPUT_PATH}/ligands_gaff2/${lig}/out_amber_pose_000001.txt
-$(( ${selectedPoses2[${count}]}-1 ))
+python3 ${PATH_TO_SCRIPTS}/extractPose_final.py <<-eof
+../${mol2File}
+${lig}
 pose_1/ligand.mol2
 eof
-obabel "pose_1/ligand.mol2" -O "pose_1/${lig}.mol2"
-mv pose_1/${lig}.mol2 pose_1/ligand.mol2
+### let obabel adjust the format of the MOL2 file as it needs it
+obabel "pose_1/ligand.mol2" -O "pose_1/dummy.mol2"
+mv pose_1/dummy.mol2 pose_1/ligand.mol2
 
-## correct atom and residue naming for poses
-startLineRef=$(grep -n "@<TRIPOS>ATOM" ligand.mol2 | cut -d ":" -f 1)
-endLineRef=$(grep -Rn "@<TRIPOS>" ligand.mol2 | awk 'c&&!--c;/>ATOM/{c=1}' | cut -d ":" -f 1)
-
+## remove LiGen virtual sites
 for i in $(seq 0 ${numberOfPoses}); do
-
-# skip loop iteration if pose was deleted by previous step
-if ! [ -d pose_${i} ]
+cd pose_${i}
+if grep -q "EP" ligand.mol2
 then
-continue
+numberOfVirtualSites=$(grep -c "EP" ligand.mol2)
+### remove LiGen virtual sites
+sed -i '/EP/d' ligand.mol2
+### adjust atom number
+patternOld="$(head -3 ligand.mol2 | tail -1 | cut -c1-12)"
+patternNew="$(( $(head -3 ligand.mol2 | tail -1 | cut -c1-3)-${numberOfVirtualSites} ))""$(head -3 ligand.mol2 | tail -1 | cut -c4-12)"
+sed -i ligand.mol2 -e "s/${patternOld}/${patternNew}/g"
+### let obabel adjust the format of the MOL2 file as it needs it
+obabel "ligand.mol2" -O "dummy.mol2"
+mv dummy.mol2 ligand.mol2
 fi
+cd ..
+done
 
-touch pose_${i}/correctPose.mol2
-startLinePose=$(grep -n "@<TRIPOS>ATOM" pose_${i}/ligand.mol2 | cut -d ":" -f 1)
-endLinePose=$(grep -Rn "@<TRIPOS>" pose_${i}/ligand.mol2 | awk 'c&&!--c;/>ATOM/{c=1}' | cut -d ":" -f 1)
-head -${startLinePose} pose_${i}/ligand.mol2 >> pose_${i}/correctPose.mol2
-for j in $(seq 1 $(( ${endLineRef} - ${startLineRef} - 1 ))); do
-fileContentRef=$(head -$(( ${startLineRef} + ${j} )) ligand.mol2 | tail -1)
-fileContentPose=$(head -$(( ${startLinePose} + ${j} )) pose_${i}/ligand.mol2 | tail -1)
-residueNameRef=$(echo "${fileContentRef}" | cut -c59-63 | sed -e "s/\*/\\\*/g")
-residueNamePose=$(echo "${fileContentPose}" | cut -c59-63 | sed -e "s/\*/\\\*/g")
-atomNameRef=$(echo "${fileContentRef}" | cut -c9-11)
-atomNamePose=$(echo "${fileContentPose}" | cut -c9-11)
-echo "${fileContentPose}" | sed -e "s/${residueNamePose}/${residueNameRef}/g" | sed -e "s/${atomNamePose}/${atomNameRef}/g" >> pose_${i}/correctPose.mol2
-done
-tail +${endLinePose} pose_${i}/ligand.mol2 >> pose_${i}/correctPose.mol2
-mv pose_${i}/correctPose.mol2 pose_${i}/ligand.mol2
-done
-echo "For ${lig}, the atom and residue naming of the individual poses has been corrected."
+## use MOL2 file of first pose for topology generation
+cp pose_0/ligand.mol2 ligand.mol2
 
 # check ligand
 ## initialise
@@ -365,10 +313,7 @@ lineNumber2=$(( ${lineNumber} + ${numberOfAtoms} ))
 for i in $(seq -w $(( ${lineNumber} + 1 )) ${lineNumber2}); do
 content=$(head -n ${i} ligand.mol2 | tail -n 1 | cut -c59-63)
 # remove spaces
-if ! $(echo "${content}" | grep -q "\*\*\*\*")
-then
 content=$(echo ${content})
-fi
 ### check number of residues in ligand
 ### blind spot: a chain of the same type of residue is considered one residue
 ### however, pdb2gmx has the same blind spot and will refuse to parameterise a chain containing only one type of residue
@@ -376,7 +321,7 @@ if (( ${residueCount} < 2 ))
 then
 ### in the dataset, all hydrogen atoms have a residue name containing ****
 ### therefore, residue names containing **** must not increase the residue count
-if [[ ${content} != ${previousResidueName} ]]  && ! $(echo "${content}" | grep -q "\*\*\*\*")
+if [[ ${content} != ${previousResidueName} ]]
 then
 residueCount=$(( ${residueCount} + 1 ))
 fi
@@ -402,22 +347,6 @@ elif grep -q "${content} " ${GMXDATA}/amber99sb-ildn.ff/rna.rtp && [[ ${content}
 then
 count=$(( ${count} + 1 ))
 countRNA=$(( ${countRNA} + 1 ))
-### in the PS dataset, all hydrogen atoms have **** as residue name => do not consider when identifying molecule type
-elif $(echo "${content}" | grep -q "\*\*\*\*")
-then
-#### if the heavy atoms all belong to one kind of molecule, the group of hydrogens at the end of the file will not change the classification
-if (( ${count} == ${countPeptide} ))
-then
-countPeptide=$(( ${countPeptide} + 1 ))
-elif (( ${count} == ${countDNA} ))
-then
-countDNA=$(( ${countDNA} + 1 ))
-elif (( ${count} == ${countRNA} ))
-then
-countRNA=$(( ${countRNA} + 1 ))
-fi
-#### we later on check that count equals the number of atoms in the system => increase it for hydrogens, too
-count=$(( ${count} + 1 ))
 else
 break
 fi
@@ -452,11 +381,11 @@ done
 if (( ${countPeptide}>0 )) || (( ${countDNA}>0 )) || (( ${countRNA}>0 ))
 then
 isPeptideLigand=1
-echo "${lig}: Found peptide, DNA or RNA residues! The CADD workflow has no special support for these kind of molecules. They are treated like any other small organic molecule (GAFF2 parameterisation)."
+echo "lig_${ligandCount} (${lig}): Found peptide, DNA or RNA residues! The CADD workflow has no special support for these kind of molecules. They are treated like any other small organic molecule (GAFF2 parameterisation)."
 fi
 
 # treatment of general ligand
-echo "${lig}: Assuming a SMALL ORGANIC LIGAND!"
+echo "lig_${ligandCount} (${lig}): Assuming a SMALL ORGANIC LIGAND!"
 stage=$(which stage.py)
 python3 $stage -i "ligand.mol2" -o "ligand_stage" --forcefields $FF
 
@@ -474,15 +403,15 @@ lineNumberForCheckingStage=$(grep -n "Assuming a SMALL ORGANIC LIGAND!" ${PATH_T
 lineNumberForCheckingStage=$(( $(cat ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | wc -l) - ${lineNumberForCheckingStage} ))
 if (( $(tail -${lineNumberForCheckingStage} ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -c "Error running generator for gaff2") == 2 )) || (( $(tail -${lineNumberForCheckingStage} ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -c "Error removing OPLS directory") == 2 ))
 then
-echo "For ${lig}, STaGE failed to generate a ligand topology. Deleting folder as this ligand should not be handled by the current workflow."
+echo "For lig_${ligandCount} (${lig}), STaGE failed to generate a ligand topology. Deleting folder as this ligand should not be handled by the current workflow."
 cd ..
-rm -rf ${lig}
+rm -rf lig_${ligandCount}
 continue
 elif (( $(tail -${lineNumberForCheckingStage} ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -c "Error running generator for gaff2") == 1 )) || (( $(tail -${lineNumberForCheckingStage} ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -c "Error removing OPLS directory") == 1 ))
 then
-echo "For ${lig}, STaGE worked with the alternative total charge."
+echo "For lig_${ligandCount} (${lig}), STaGE worked with the alternative total charge."
 else
-echo "For ${lig}, STaGE successfully generated the ligand topology with the total charge from the input MOL2 file."
+echo "For lig_${ligandCount} (${lig}), STaGE successfully generated the ligand topology with the total charge from the input MOL2 file."
 fi
 
 # sort files
@@ -532,7 +461,7 @@ gmx grompp -f ${PATH_TO_SCRIPTS}/mdp/dummy.mdp -c pose_${i}/full.gro -r pose_${i
 ### catch potential grompp segfault
 if $(tail -1 ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -q "core dumped")
 then
-echo "For pose_${i} of ${lig}, executing gmx grompp resulted in a segmentation fault/core dump. Deleting folder as this complex should not be handled by the current workflow."
+echo "For pose_${i} of lig_${ligandCount} (${lig}), executing gmx grompp resulted in a segmentation fault/core dump. Deleting folder as this complex should not be handled by the current workflow."
 rm -rf pose_${i}/
 continue
 fi
@@ -540,7 +469,7 @@ fi
 ### catch other grompp errors
 if [ ! -s pose_${i}/check.tpr ]
 then
-echo "For pose_${i} of ${lig}, the TPR file could not be generated (grompp error). Deleting folder as this structure should not be handled by the current workflow."
+echo "For pose_${i} of lig_${ligandCount} (${lig}), the TPR file could not be generated (grompp error). Deleting folder as this structure should not be handled by the current workflow."
 rm -rf pose_${i}/
 continue
 fi
@@ -551,9 +480,9 @@ done
 # remove directory if none of the poses survives
 if (( $(ls -lh | grep "pose_" | wc -l) < 2 ));
 then
-echo "For ${lig}, the TPR file could be generated for less than two poses. Deleting directory!"
+echo "For lig_${ligandCount} (${lig}), the TPR file could be generated for less than two poses. Deleting directory!"
 cd ..
-rm -rf ${lig}
+rm -rf lig_${ligandCount}
 continue
 fi
 
@@ -615,10 +544,10 @@ modelledResidues
 eof
 distance=$(tail -1 pose_${i}/check.xvg | rev | cut -d " " -f 1 | rev) # distance in nm
 distance=$(echo ${distance} 10 | awk '{print $1 * $2}') # distance in A
-echo "For pose_${i} of ${lig}, the minimum distance between the ligand and modelled residues (in A) amounts to: ${distance}"
+echo "For pose_${i} of lig_${ligandCount} (${lig}), the minimum distance between the ligand and modelled residues (in A) amounts to: ${distance}"
 if (( $(echo "${distance} < 3" | bc -l) ))
 then
-echo "For pose_${i} of ${lig}, modelled residues are very close to the bound ligand (less than 3 A). Deleting folder as this structure should not be handled by the current workflow!"
+echo "For pose_${i} of lig_${ligandCount} (${lig}), modelled residues are very close to the bound ligand (less than 3 A). Deleting folder as this structure should not be handled by the current workflow!"
 rm -rf pose_${i}
 continue
 fi
@@ -632,9 +561,9 @@ rm check.ndx
 # remove directory if none of the poses survives
 if (( $(ls -lh | grep "pose_" | wc -l) < 2 ));
 then
-echo "For ${lig}, modelled residues are not very close to the bound ligand (less than 3 A) in less than two poses. Deleting directory!"
+echo "For lig_${ligandCount} (${lig}), modelled residues are not very close to the bound ligand (less than 3 A) in less than two poses. Deleting directory!"
 cd ..
-rm -rf ${lig}
+rm -rf lig_${ligandCount}
 exit 0
 fi
 
@@ -655,7 +584,7 @@ gmx grompp -f ${PATH_TO_SCRIPTS}/mdp/dummy.mdp -c pose_${i}/full.gro -r pose_${i
 ### catch potential grompp segfault
 if $(tail -1 ${PATH_TO_SLURM}/slurm-${SLURM_JOB_ID}.out | grep -q "core dumped")
 then
-echo "For pose_${i} of ${lig}, executing gmx grompp resulted in a segmentation fault/core dump. Deleting folder as this complex should not be handled by the current workflow."
+echo "For pose_${i} of lig_${ligandCount} (${lig}), executing gmx grompp resulted in a segmentation fault/core dump. Deleting folder as this complex should not be handled by the current workflow."
 rm -rf pose_${i}/
 continue
 fi
@@ -663,7 +592,7 @@ fi
 ### catch other grompp errors
 if [ ! -s pose_${i}/check.tpr ]
 then
-echo "For pose_${i} of ${lig}, the TPR file could not be generated (grompp error). Deleting folder as this structure should not be handled by the current workflow."
+echo "For pose_${i} of lig_${ligandCount} (${lig}), the TPR file could not be generated (grompp error). Deleting folder as this structure should not be handled by the current workflow."
 rm -rf pose_${i}/
 continue
 fi
@@ -674,9 +603,9 @@ done
 # remove directory if none of the poses survives
 if (( $(ls -lh | grep "pose_" | wc -l) < 2 ));
 then
-echo "For ${lig}, the TPR file could be generated successfully for less than two poses. Deleting directory!"
+echo "For lig_${ligandCount} (${lig}), the TPR file could be generated successfully for less than two poses. Deleting directory!"
 cd ..
-rm -rf ${lig}
+rm -rf lig_${ligandCount}
 exit 0
 fi
 
@@ -738,10 +667,10 @@ modelledAtoms
 eof
 distance=$(tail -1 pose_${i}/check.xvg | rev | cut -d " " -f 1 | rev) # distance in nm
 distance=$(echo ${distance} 10 | awk '{print $1 * $2}') # distance in A
-echo "For pose_${i} of ${lig}, the minimum distance between the ligand and modelled atoms (in A) amounts to: ${distance}"
+echo "For pose_${i} of lig_${ligandCount} (${lig}), the minimum distance between the ligand and modelled atoms (in A) amounts to: ${distance}"
 if (( $(echo "${distance} < 3" | bc -l) ))
 then
-echo "For pose_${i} of ${lig}, modelled atoms are very close to the bound ligand (less than 3 A). Deleting folder as this protein should not be handled by the current workflow!"
+echo "For pose_${i} of lig_${ligandCount} (${lig}), modelled atoms are very close to the bound ligand (less than 3 A). Deleting folder as this protein should not be handled by the current workflow!"
 rm -rf pose_${i}
 continue
 fi
@@ -755,9 +684,9 @@ rm check.ndx
 # remove directory if none of the poses survives
 if (( $(ls -lh | grep "pose_" | wc -l) < 2 ));
 then
-echo "For ${lig}, modelled atoms are not very close to the bound ligand (less than 3 A) in less than two poses. Deleting directory!"
+echo "For lig_${ligandCount} (${lig}), modelled atoms are not very close to the bound ligand (less than 3 A) in less than two poses. Deleting directory!"
 cd ..
-rm -rf ${lig}
+rm -rf lig_${ligandCount}
 exit 0
 fi
 
@@ -766,19 +695,12 @@ echo "No atoms in residues needed to be modelled."
 fi
 
 cd ..
-count=$(( ${count}+1 ))
+ligandCount=$(( ${ligandCount}+1 ))
 done # loop over ligands
 
-count=0
-index=0
-for lig in ${selectedLigands[@]}; do
-if [ -d ${selectedLigands[${index}]} ]
-then
-count=$(( ${count}+1 ))
-fi
-index=$(( ${index}+1 ))
-done
-
+# calculate number of ligands for which a topology could be generated
+count=$(ls | grep -c "lig")
+echo "CADD: ligands created = $count " >> $LOGFILE
 if (( ${count} < 2 ))
 then
 echo "Cannot calculate relative binding free energies with only one ligand. Stopping workflow execution!"
@@ -874,9 +796,11 @@ rm CONECT.txt residuesNotRemodelled.txt
 
 # unload required external software to restore the environment at the beginning of the script
 module unload python/3.11.1
-module unload forSTaGE/openbabel/3.1.1
-module unload forSTaGE/ambertools/21
-module unload forSTaGE/acpype/2022.7.21
+module unload openbabel/3.1.1
+module unload ambertools/22
+module unload acpype/2022.7.21
 module unload gromacs/2023.2
 
 export GMXLIB=""
+now=$(date "+%d:%m:%Y-%H:%M:%S")
+echo "CADD: $now: GROMACS_LiGen_integration_final.sh --exiting  " >> $LOGFILE

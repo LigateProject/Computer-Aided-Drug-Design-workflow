@@ -4,6 +4,8 @@ import sys
 from rdkit import Chem
 from rdkit.Chem import rdMolAlign
 from rdkit.Chem import rdmolops
+from rdkit.Chem import rdMolTransforms
+from rdkit.Chem import rdFMCS
 
 class TopologyMerger:
 
@@ -163,23 +165,39 @@ class TopologyMerger:
         self.readInDihedrals()
 
     def createMapping(self, filename1, filename2):
-        # let rdkit align the two molecules
-        ligandA = rdmolops.AddHs(Chem.MolFromMol2File(filename1))
-        ligandB = rdmolops.AddHs(Chem.MolFromMol2File(filename2))
-        o3a = rdMolAlign.GetO3A(ligandA, ligandB)
-        mapping = o3a.Matches()
+        print("Determining MCS without hydrogen atoms to generate hybrid ligand topology and structure.")
 
-        # we can assume that the order of atoms is the same in mol2 and itp file
-        # rdkit only aligns heavy atoms; add hydrogens back
-        numberMapping = []
-        for i in range(len(self.atoms)):
-            numberMapping.append([])
-            for j in range(len(self.atoms[i])):
-                if (not "h" in self.atoms[i][j][1]):
-                    numberMapping[i].append(j)
-        for i in range(len(mapping)):
-            for j in range(len(mapping[i])):
-                mapping[i][j] = numberMapping[j][i]
+        # let rdkit determine the MCS of the two molecules without H atoms and use it as constraints for alignment
+        ligandANoH = Chem.MolFromMol2File(filename1, removeHs=True)
+        ligandBNoH = Chem.MolFromMol2File(filename2, removeHs=True)
+
+        paramsNoH = rdFMCS.MCSParameters()
+        paramsNoH.AtomTyper = rdFMCS.AtomCompare.CompareElements
+        paramsNoH.BondTyper = rdFMCS.BondCompare.CompareOrder
+        paramsNoH.AtomCompareParameters.RingMatchesRingOnly = True
+        paramsNoH.AtomCompareParameters.CompleteRingsOnly = True
+        paramsNoH.MaximizeBonds = True
+        mcsNoH = rdFMCS.FindMCS([ligandANoH, ligandBNoH], paramsNoH)
+        mapping = []
+        constraintMap = []
+        subStructureANoH = ligandANoH.GetSubstructMatch(mcsNoH.queryMol)
+        subStructureBNoH = ligandBNoH.GetSubstructMatch(mcsNoH.queryMol)
+        for i in range(len(subStructureANoH)):
+            mapping.append([subStructureANoH[i], subStructureBNoH[i]])
+            constraintMap.append([subStructureBNoH[i], subStructureANoH[i]])
+
+        print("Aligning ligand B onto ligand A to obtain hybrid ligand structure.")
+
+        # read in the full molecule with H-atoms
+        ligandA = Chem.MolFromMol2File(filename1, removeHs=False)
+        ligandB = Chem.MolFromMol2File(filename2, removeHs=False)
+        # let rdkit align the two ligands
+        o3a = rdMolAlign.GetO3A(ligandB, ligandA, None, None, -1, -1, False, 50, 0, constraintMap, [])
+        conformer = ligandB.GetConformer()
+        rdMolTransforms.TransformConformer(conformer, o3a.Trans()[1])
+        self.newCoords = conformer.GetPositions()
+
+        print("Adding back hydrogens.")
 
         # identify hydrogens bound to heavy atoms
         for i in range(len(mapping)):
@@ -189,10 +207,10 @@ class TopologyMerger:
                 boundHydrogens.append([])
                 for k in range(len(self.bonds[j])):
                     if (mapping[i][j] == int(self.bonds[j][k][0])-1):
-                        if ("h" in self.atoms[j][int(self.bonds[j][k][1])-1][1]):
+                        if ("h" in (self.atoms[j][int(self.bonds[j][k][1])-1][1])[:-1]):
                             boundHydrogens[j].append(int(self.bonds[j][k][1])-1)
                     elif (mapping[i][j] == int(self.bonds[j][k][1])-1):
-                        if ("h" in self.atoms[j][int(self.bonds[j][k][0])-1][1]):
+                        if ("h" in (self.atoms[j][int(self.bonds[j][k][0])-1][1])[:-1]):
                             boundHydrogens[j].append(int(self.bonds[j][k][0])-1)
                 boundHydrogens[j].sort()
                 numberHydrogens.append(len(boundHydrogens[j]))
@@ -201,6 +219,12 @@ class TopologyMerger:
                 for j in range(len(boundHydrogens)):
                     listToAppend.append(boundHydrogens[j][k])
                 mapping.append(listToAppend)
+
+        # To avoid steric strain and to be more efficient in terms of atoms that need to be handled by the FEP code,
+        # we would like to extend the mapping to include atoms that are different elements but overlap perfectly,
+        # e.g. terminal H-atoms that are replaced by other functional groups or ring heteroatoms that are transformed.
+        # However, AWH simulations cannot change the mass of the atom during an alchemical transformation.
+        # Until this is fixed in GROMACS, we have to annihilate and create overlapping atoms belonging to different elements.
 
         # add dummy atoms
         covered = [[] for i in range(len(self.atoms))]
@@ -234,6 +258,8 @@ class TopologyMerger:
                         break
         self.indexMapping = indexMapping
 
+        print("Full mapping obtained. Ready to generate hybrid topology.")
+
     def mergeHeaders(self):
         # merge data
         self.header.append([])
@@ -251,20 +277,16 @@ class TopologyMerger:
         self.atoms[-1].append(" [ atoms ]\n")
         self.atoms[-1].append(";   nr       type  resnr residue  atom   cgnr     charge       mass  typeB    chargeB      massB\n")
         justificationList = [6, 12, 7, 7, 7, 7, 11, 11, 12, 11, 11]
-        for i in range(max(self.indexMapping[-1]) + 1):
+        atomRange = max([self.indexMapping[0][-1] + 1, max(self.indexMapping[-1]) + 1])
+        for i in range(atomRange):
             resultString = ""
             if (i < len(self.atoms[0])):
                 for j in range(len(self.atoms[0][i])):
                     resultString += self.atoms[0][i][j].rjust(justificationList[j], " ")
                 if i in self.indexMapping[1]:
-                    checkCount = 0
                     indexList = [1, 6, 7]
                     for j in range(3):
-                        if (self.atoms[0][i][indexList[j]] != self.atoms[1][self.indexMapping[1].index(i)][indexList[j]]):
-                            checkCount += 1
-                    if (checkCount > 0):
-                        for j in range(3):
-                            resultString += self.atoms[1][self.indexMapping[1].index(i)][indexList[j]].rjust(justificationList[len(self.atoms[0][i]) + j], " ")
+                        resultString += self.atoms[1][self.indexMapping[1].index(i)][indexList[j]].rjust(justificationList[len(self.atoms[0][i]) + j], " ")
                 else:
                     if ("DUM_" + self.atoms[0][i][1] not in self.dummyAtoms):
                         self.dummyAtoms.append("DUM_" + self.atoms[0][i][1])
@@ -297,16 +319,35 @@ class TopologyMerger:
         self.bonds[-1].append(";  ai    aj funct            c0            c1            c2            c3\n")
         justificationList = [6, 7, 7, 15, 15, 15, 15]
         alreadySeen = []
+        # generate list of tuples with bonds in state B expressed in the atom indices of state A
+        alreadySeenTuplesB = []
+        for i in range(len(self.bonds[1])):
+            alreadySeenTuplesB.append((self.indexMapping[1][int(self.bonds[1][i][0])-1]+1, self.indexMapping[1][int(self.bonds[1][i][1])-1]+1))
         for i in range(len(self.bonds[0])):
             alreadySeen.append([(self.bonds[0][i][0], self.bonds[0][i][1]), self.bonds[0][i][2], self.bonds[0][i][3], self.bonds[0][i][4], self.bonds[0][i][3], self.bonds[0][i][4]])
+            testTuple = (int(self.bonds[0][i][0]), int(self.bonds[0][i][1]))
+            inverseTuple = (testTuple[1], testTuple[0])
+            # Set force constant to zero in state B if bond only exists in state A and does not involve a virtual site
+            if (testTuple not in alreadySeenTuplesB) and (inverseTuple not in alreadySeenTuplesB) and (testTuple[0]-1 in self.indexMapping[1]) and (testTuple[1]-1 in self.indexMapping[1]):
+                alreadySeen[-1][5] = "0.000000"
         alreadySeenTuples = [tuple(map(int, alreadySeen[i][0])) for i in range(len(alreadySeen))]
         for i in range(len(self.bonds[1])):
             testTuple = (self.indexMapping[1][int(self.bonds[1][i][0])-1]+1, self.indexMapping[1][int(self.bonds[1][i][1])-1]+1)
+            inverseTuple = (testTuple[1], testTuple[0])
+            # modify force field paramerers for state B (check both permutations of the tuple)
             if testTuple in alreadySeenTuples:
                 alreadySeen[alreadySeenTuples.index(testTuple)][-2] = self.bonds[1][i][3]
                 alreadySeen[alreadySeenTuples.index(testTuple)][-1] = self.bonds[1][i][4]
+            elif inverseTuple in alreadySeenTuples:
+                alreadySeen[alreadySeenTuples.index(inverseTuple)][-2] = self.bonds[1][i][3]
+                alreadySeen[alreadySeenTuples.index(inverseTuple)][-1] = self.bonds[1][i][4]
+                # we have to avoid redundant bond definitions because they cause constraint errors
+                continue
             else:
                 alreadySeen.append([tuple(map(str, testTuple)), self.bonds[1][i][2], self.bonds[1][i][3], self.bonds[1][i][4], self.bonds[1][i][3], self.bonds[1][i][4]])
+            # Set force constant to zero in state A if bond only exists in state B and does not involve a virtual site
+            if (testTuple not in alreadySeenTuples) and (inverseTuple not in alreadySeenTuples) and (testTuple[0]-1 < len(self.atoms[0])) and (testTuple[1]-1 < len(self.atoms[0])):
+                alreadySeen[-1][3] = "0.000000"
         for i in range(len(alreadySeen)):
             resultString = ""
             resultString += alreadySeen[i][0][0].rjust(justificationList[0]) + alreadySeen[i][0][1].rjust(justificationList[1])
@@ -328,6 +369,10 @@ class TopologyMerger:
         alreadySeenTuples = [tuple(map(int, alreadySeen[i][0])) for i in range(len(alreadySeen))]
         for i in range(len(self.pairs[1])):
             testTuple = (self.indexMapping[1][int(self.pairs[1][i][0])-1]+1, self.indexMapping[1][int(self.pairs[1][i][1])-1]+1)
+            inverseTuple = (testTuple[1], testTuple[0])
+            # we have to avoid redundant pair definitions because they cause constraint errors
+            if inverseTuple in alreadySeenTuples:
+                continue
             if testTuple not in alreadySeenTuples:
                 alreadySeen.append([tuple(map(str, testTuple)), self.pairs[1][i][2]])
         for i in range(len(alreadySeen)):
@@ -344,16 +389,35 @@ class TopologyMerger:
         self.angles[-1].append(";  ai    aj    ak funct            c0            c1            c2            c3\n")
         justificationList = [6, 7, 7, 7, 15, 15, 15, 15]
         alreadySeen = []
+        # generate list of tuples with angles in state B expressed in the atom indices of state A
+        alreadySeenTuplesB = []
+        for i in range(len(self.angles[1])):
+            alreadySeenTuplesB.append((self.indexMapping[1][int(self.angles[1][i][0])-1]+1, self.indexMapping[1][int(self.angles[1][i][1])-1]+1, self.indexMapping[1][int(self.angles[1][i][2])-1]+1))
         for i in range(len(self.angles[0])):
             alreadySeen.append([(self.angles[0][i][0], self.angles[0][i][1], self.angles[0][i][2]), self.angles[0][i][3], self.angles[0][i][4], self.angles[0][i][5], self.angles[0][i][4], self.angles[0][i][5]])
+            testTuple = (int(self.angles[0][i][0]), int(self.angles[0][i][1]), int(self.angles[0][i][2]))
+            inverseTuple = (testTuple[2], testTuple[1], testTuple[0])
+            # Set force constant to zero in state B if bond only exists in state A and does not involve a virtual site
+            if (testTuple not in alreadySeenTuplesB) and (inverseTuple not in alreadySeenTuplesB) and (testTuple[0]-1 in self.indexMapping[1]) and (testTuple[1]-1 in self.indexMapping[1]) and (testTuple[2]-1 in self.indexMapping[1]):
+                alreadySeen[-1][5] = "0.000000"
         alreadySeenTuples = [tuple(map(int, alreadySeen[i][0])) for i in range(len(alreadySeen))]
         for i in range(len(self.angles[1])):
             testTuple = (self.indexMapping[1][int(self.angles[1][i][0])-1]+1, self.indexMapping[1][int(self.angles[1][i][1])-1]+1, self.indexMapping[1][int(self.angles[1][i][2])-1]+1)
+            inverseTuple = (testTuple[2], testTuple[1], testTuple[0])
+            # modify force field paramerers for state B (check both permutations of the tuple)
             if testTuple in alreadySeenTuples:
                 alreadySeen[alreadySeenTuples.index(testTuple)][-2] = self.angles[1][i][4]
                 alreadySeen[alreadySeenTuples.index(testTuple)][-1] = self.angles[1][i][5]
+            elif inverseTuple in alreadySeenTuples:
+                alreadySeen[alreadySeenTuples.index(inverseTuple)][-2] = self.angles[1][i][4]
+                alreadySeen[alreadySeenTuples.index(inverseTuple)][-1] = self.angles[1][i][5]
+                # we have to avoid redundant angle definitions because they cause constraint errors
+                continue
             else:
                 alreadySeen.append([tuple(map(str, testTuple)), self.angles[1][i][3], self.angles[1][i][4], self.angles[1][i][5], self.angles[1][i][4], self.angles[1][i][5]])
+            # Set force constant to zero in state A if angle only exists in state B and does not involve a virtual site
+            if (testTuple not in alreadySeenTuples) and (inverseTuple not in alreadySeenTuples) and (testTuple[0]-1 < len(self.atoms[0])) and (testTuple[1]-1 < len(self.atoms[0])) and (testTuple[2]-1 < len(self.atoms[0])):
+                alreadySeen[-1][3] = "0.000000"
         for i in range(len(alreadySeen)):
             resultString = ""
             resultString += alreadySeen[i][0][0].rjust(justificationList[0]) + alreadySeen[i][0][1].rjust(justificationList[1]) + alreadySeen[i][0][2].rjust(justificationList[2])
@@ -377,7 +441,7 @@ class TopologyMerger:
                 listToAppend.append(self.dihedrals[0][i][j])
             for j in range(5, 8):
                 listToAppend.append(self.dihedrals[0][i][j])
-            listToAppend[6] = "0" # why?
+            listToAppend[6] = "0"
             alreadySeen.append(listToAppend)
         for i in range(len(self.dihedrals[1])):
             listToAppend = []
@@ -387,7 +451,7 @@ class TopologyMerger:
                 listToAppend.append(self.dihedrals[1][i][j])
             for j in range(5, 8):
                 listToAppend.append(self.dihedrals[1][i][j])
-            listToAppend[3] = "0" # why?
+            listToAppend[3] = "0"
             alreadySeen.append(listToAppend)
         for i in range(len(alreadySeen)):
             resultString = ""
@@ -406,9 +470,9 @@ class TopologyMerger:
                 check = True
             if check:
                 if ((i < len(self.dihedrals[0])) and (int(alreadySeen[i][1]) == 4) and (float(alreadySeen[i][3]) > 0) and (float(alreadySeen[i][6]) == 0)):
-                    alreadySeen[i][3] = "0" # why?
+                    alreadySeen[i][3] = "0"
                 elif ((i >= len(self.dihedrals[0])) and (int(alreadySeen[i][1]) == 4) and (float(alreadySeen[i][3]) == 0) and (float(alreadySeen[i][6]) > 0)):
-                    alreadySeen[i][6] = "0" # why?
+                    alreadySeen[i][6] = "0"
                 else:
                     alreadySeen[i][3], alreadySeen[i][6] = alreadySeen[i][6], alreadySeen[i][3]
                 resultString = ""
@@ -474,7 +538,8 @@ class TopologyMerger:
             if i == 0:
                 outputFile.write(groFileList[0][0])
             elif i == 1:
-                outputFile.write(" {:d}\n".format(max(self.indexMapping[-1]) + 1))
+                atomNumber = max([self.indexMapping[0][-1] + 1, max(self.indexMapping[-1]) + 1])
+                outputFile.write(" {:d}\n".format(atomNumber))
             else:
                 string = ""
                 for j in range(3):
@@ -519,7 +584,11 @@ class TopologyMerger:
                     elif (line == lines[-1]):
                         gro[index][-1] = [float(boxDim) for boxDim in line.split()]
                     else:
-                        gro[index][-1] = [gro[index][-1][0], gro[index][-1][1], gro[index][-1][2], int(gro[index][-1][3]), float(gro[index][-1][4]), float(gro[index][-1][5]), float(gro[index][-1][6])]
+                        ## print aligned heavy atoms of ligand B
+                        if (index == 1):
+                            gro[index][-1] = [gro[index][-1][0], gro[index][-1][1], gro[index][-1][2], int(gro[index][-1][3]), self.newCoords[counter-2][0]/10.0, self.newCoords[counter-2][1]/10.0, self.newCoords[counter-2][2]/10.0]
+                        else:
+                            gro[index][-1] = [gro[index][-1][0], gro[index][-1][1], gro[index][-1][2], int(gro[index][-1][3]), float(gro[index][-1][4]), float(gro[index][-1][5]), float(gro[index][-1][6])]
                 else:
                     gro[index].append("Merged ligand\n")
                 counter += 1
